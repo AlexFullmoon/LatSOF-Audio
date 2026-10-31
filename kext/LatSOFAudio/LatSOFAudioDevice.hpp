@@ -55,8 +55,8 @@ enum {
 // DMIC capture: 2ch S32 @ 48 kHz — this driver's DMA format (SDxFMT 0x0041,
 // 32-bit container). Linux hw_params for the same PCM negotiates S16/2ch;
 // the earlier "4ch" claim here was from the reference driver's board.
-#define kLatSOF_CapChannels     2
-#define kLatSOF_CapBytesPerFrame (kLatSOF_CapChannels * 4)  // 8 (2ch × S32)
+#define kLatSOF_CapChannels     4
+#define kLatSOF_CapBytesPerFrame (kLatSOF_CapChannels * 4)  // 16 (4ch × S32)
 #define kLatSOF_CapBufferSize   (kLatSOF_BufferFrames * kLatSOF_CapBytesPerFrame)
 
 class LatSOFAudioUserClient;

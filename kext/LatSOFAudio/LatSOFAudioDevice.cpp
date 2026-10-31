@@ -3655,13 +3655,14 @@ bool LatSOFAudioDevice::initDSP() {
                   *(UInt32*)(d+16)=48000;    // fifo_fs
                   *(UInt16*)(d+24)=32; *(UInt16*)(d+26)=32; // fifo_bits, fifo_bits_b
                   *(UInt16*)(d+28)=40; *(UInt16*)(d+30)=60; // duty_min, duty_max
-                  *(UInt32*)(d+32)=1;        // EXPERIMENT A/B: PDM0 only (tplg says 2; PDM1 block below kept, ignored by fw)
+                  *(UInt32*)(d+32)=2;        // 4 DMICs: 2 PDM controllers (2 mics each), per sof-hda-generic-4ch.tplg
                   *(UInt32*)(d+44)=200;      // unmute_ramp_time_ms (4ch tplg dmic01: 200)
                   // PDM0 at DMIC+72 (DAI_CONFIG offset 124)
                   UInt8 *p0=m+124;
                   *(UInt16*)(p0+0)=0; *(UInt16*)(p0+2)=1; *(UInt16*)(p0+4)=1; // id=0, mic_a=1, mic_b=1
-                  // PDM1: next sof_ipc_dai_dmic_pdm_ctrl (40 bytes: hdr 8 + 7 u16 + 9 u16 reserved)
-                  UInt8 *p1=p0+40;
+                  // PDM1: sof_ipc_dai_dmic_pdm_ctrl is 24 bytes (hdr 4 + 7 u16 + 3 u16 reserved);
+                  // pdm[] starts at DMIC+68 (hdr.size 4 + 12 words + reserved[5]) -> PDM0 id at +72 (m+124)
+                  UInt8 *p1=p0+24;
                   *(UInt16*)(p1+0)=1; *(UInt16*)(p1+2)=1; *(UInt16*)(p1+4)=1; // id=1, mic_a=1, mic_b=1
                   countIpc(sendIpc(m, 216)); }
                 { struct { UInt32 s,c,src,dst; } __attribute__((packed)) conn[] = {
@@ -4924,7 +4925,7 @@ IOReturn LatSOFAudioDevice::startCaptureGated() {
     // startPlaybackGated Step 2f (Linux hda-stream.c:624-637).
     if (ppCap) wr32(hdaBase, ppCap + PP_PPCTL,
                     rd32(hdaBase, ppCap + PP_PPCTL) & ~(1U << capIdx));
-    wr16(hdaBase, capSd + SD_REG_FMT, 0x0041); // 48kHz 32-bit 2ch
+    wr16(hdaBase, capSd + SD_REG_FMT, 0x0040 | (kLatSOF_CapChannels - 1)); // 48kHz 32-bit, 4ch = 0x0043
     if (ppCap) wr32(hdaBase, ppCap + PP_PPCTL,
                     rd32(hdaBase, ppCap + PP_PPCTL) | (1U << capIdx));
     wr8(hdaBase, capSd + 2, (UInt8)((capTag & 0xF) << 4));
@@ -5108,7 +5109,7 @@ IOReturn LatSOFAudioDevice::stopCaptureGated() {
 UInt32 LatSOFAudioDevice::getCapturePosition() {
     if (!hwReady) return 0;
     UInt32 dpib = rd32(hdaBase, HDA_VS_SDXDPIB_XBASE + HDA_VS_SDXDPIB_XINTERVAL * (UInt32)capIdx);
-    return dpib / kLatSOF_CapBytesPerFrame;  // 8 bytes/frame (2ch S32)
+    return dpib / kLatSOF_CapBytesPerFrame;  // 16 bytes/frame (4ch S32)
 }
 
 // ==================== Public wrappers (serialize via commandGate) ====================

@@ -21,7 +21,7 @@
 #include <IOKit/IOLib.h>
 
 #define kEngineSampleRate   48000
-#define kEngineChannels     2
+#define kEngineChannels     kLatSOF_CapChannels
 #define kEngineBitDepth     32
 #define kEngineFrames       kLatSOF_BufferFrames        // 16384, shared ring
 #define kWrapPollMS         100
