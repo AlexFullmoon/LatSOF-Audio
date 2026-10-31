@@ -3655,12 +3655,14 @@ bool LatSOFAudioDevice::initDSP() {
                   *(UInt32*)(d+16)=48000;    // fifo_fs
                   *(UInt16*)(d+24)=32; *(UInt16*)(d+26)=32; // fifo_bits, fifo_bits_b
                   *(UInt16*)(d+28)=40; *(UInt16*)(d+30)=60; // duty_min, duty_max
-                  *(UInt32*)(d+32)=1;        // LATITUDE FORK: 1 PDM controller (2 mics)
-                  *(UInt32*)(d+44)=400;      // wake_up_time (Linux data[24]=0x190)
+                  *(UInt32*)(d+32)=1;        // EXPERIMENT A/B: PDM0 only (tplg says 2; PDM1 block below kept, ignored by fw)
+                  *(UInt32*)(d+44)=200;      // unmute_ramp_time_ms (4ch tplg dmic01: 200)
                   // PDM0 at DMIC+72 (DAI_CONFIG offset 124)
                   UInt8 *p0=m+124;
                   *(UInt16*)(p0+0)=0; *(UInt16*)(p0+2)=1; *(UInt16*)(p0+4)=1; // id=0, mic_a=1, mic_b=1
-                  // LATITUDE FORK: PDM1 removed — this board has one PDM controller
+                  // PDM1: next sof_ipc_dai_dmic_pdm_ctrl (40 bytes: hdr 8 + 7 u16 + 9 u16 reserved)
+                  UInt8 *p1=p0+40;
+                  *(UInt16*)(p1+0)=1; *(UInt16*)(p1+2)=1; *(UInt16*)(p1+4)=1; // id=1, mic_a=1, mic_b=1
                   countIpc(sendIpc(m, 216)); }
                 { struct { UInt32 s,c,src,dst; } __attribute__((packed)) conn[] = {
                       {16, 0x30030000, PIPE3_DAI_ID, PIPE3_BUF0_ID},
