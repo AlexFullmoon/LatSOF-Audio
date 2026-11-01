@@ -32,11 +32,6 @@ cmd = lambda b: struct.unpack_from('<I', b, 4)[0]
 pp = [i for i, b in enumerate(msgs) if cmd(b) == 0x60010000 and struct.unpack_from('<H', b, 74)[0] == 4][-1]
 start = max(i for i in range(pp) if cmd(msgs[i]) == 0x30100000)
 seq = msgs[start:pp]
-# the 16 kHz DMIC pipeline (DAI index 1) Linux builds at topology load, before the 4ch one
-d1 = [i for i, b in enumerate(msgs) if cmd(b) == 0x80010000 and struct.unpack_from('<II', b, 8) == (2, 1)][-1]
-start16 = max(i for i in range(d1) if cmd(msgs[i]) == 0x30100000)
-end16 = min(i for i in range(d1, len(msgs)) if cmd(msgs[i]) == 0x30130000)
-seq16 = msgs[start16:end16 + 1]
 names = {0x30100000: 'PIPE_NEW', 0x30010000: 'COMP_NEW', 0x30200000: 'BUF_NEW', 0x30030000: 'CONNECT',
          0x30130000: 'PIPE_COMPLETE', 0x80010000: 'DAI_CONFIG'}
 ids = {}
@@ -69,17 +64,4 @@ for k, b in enumerate(seq):
         print(f'    {{ {len(b)}, kDmicMsg{k} }},   // [{k}] {names.get(c, hex(c))}')
 print('};')
 print(f'static const int kDmicTplgCount = {len(seq)};')
-print()
-print('// 16 kHz DMIC pipeline (PIPELINE.2, DAI index 1): Linux builds it at topology load; the firmware keeps')
-print('// both DMIC DAI configs and derives the PDM/FIFO setup from them.')
-for k, b in enumerate(seq16):
-    if cmd(b) != 0x80010000:
-        print(f'static const UInt8 kDmic16kMsg{k}[] = {{ ' + ', '.join(f'0x{x:02x}' for x in b) + f' }}; // {names.get(cmd(b), hex(cmd(b)))}')
-print('static const struct DmicTplgMsg kDmic16kTplg[] = {')
-for k, b in enumerate(seq16):
-    if cmd(b) == 0x80010000:
-        print(f'    {{ 0, nullptr }},   // [{k}] DAI_CONFIG idx 1 (built by the driver)')
-    else:
-        print(f'    {{ {len(b)}, kDmic16kMsg{k} }},   // [{k}] {names.get(cmd(b), hex(cmd(b)))}')
-print('};')
-print(f'static const int kDmic16kTplgCount = {len(seq16)};')
+

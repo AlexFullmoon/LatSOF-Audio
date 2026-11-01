@@ -8,5 +8,4 @@ kext/LatSOFAudio/Firmware/*.ri
 
 # Testing
 current/
-tools/
 chanlevel

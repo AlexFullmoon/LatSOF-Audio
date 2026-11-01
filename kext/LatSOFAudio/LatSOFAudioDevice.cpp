@@ -3695,12 +3695,8 @@ bool LatSOFAudioDevice::initDSP() {
 #if LATSOF_PDM_MODE == 2 && LATSOF_TPLG_REPLAY
                 // Verbatim replay of Linux's PIPELINE.10.DMIC0.IN:
                 // DAI -> BUF -> EQIIR -> BUF -> PGA -> BUF -> host, DAI schedules the pipeline.
-                // Linux first builds the 16 kHz DMIC pipeline (DAI index 1) at topology load; the
-                // firmware keeps both DMIC DAI configs and derives the PDM/FIFO setup from them.
-                for (int i = 0; i < kDmic16kTplgCount; i++) {
-                    if (kDmic16kTplg[i].len == 0) { sendDmicCfg(1, 16000, 400); continue; }
-                    countIpc(sendIpc(kDmic16kTplg[i].data, kDmic16kTplg[i].len));
-                }
+                // (Linux also builds a 16 kHz DMIC pipeline, DAI index 1, at topology load; ablation
+                // showed the firmware does not need it for 4ch capture on index 0.)
                 for (int i = 0; i < kDmicTplgCount; i++) {
                     if (kDmicTplg[i].len == 0) { sendDmicCfg(0, 48000, 200); continue; }
                     countIpc(sendIpc(kDmicTplg[i].data, kDmicTplg[i].len));

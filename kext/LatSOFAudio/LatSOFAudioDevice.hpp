@@ -62,8 +62,7 @@ enum {
 #define LATSOF_PDM_MODE         2
 #endif
 // LATSOF_TPLG_REPLAY: 1 = send Linux's whole 4ch DMIC pipeline verbatim (tplg_ipc_dmic4ch.h).
-// 0 = the hand-built host-scheduled pipeline. Replay currently makes the firmware reject the
-// DMIC DAI_CONFIG (-22, see FW-Trace), so it is off by default.
+// 0 = the hand-built host-scheduled pipeline (2ch-class chain, no EQIIR/PGA).
 #ifndef LATSOF_TPLG_REPLAY
 #define LATSOF_TPLG_REPLAY      1
 #endif
