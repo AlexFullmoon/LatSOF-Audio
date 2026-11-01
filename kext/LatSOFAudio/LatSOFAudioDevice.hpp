@@ -61,11 +61,6 @@ enum {
 #ifndef LATSOF_PDM_MODE
 #define LATSOF_PDM_MODE         2
 #endif
-// LATSOF_TPLG_REPLAY: 1 = send Linux's whole 4ch DMIC pipeline verbatim (tplg_ipc_dmic4ch.h).
-// 0 = the hand-built host-scheduled pipeline (2ch-class chain, no EQIIR/PGA).
-#ifndef LATSOF_TPLG_REPLAY
-#define LATSOF_TPLG_REPLAY      1
-#endif
 #if LATSOF_PDM_MODE == 2
 #define kLatSOF_CapChannels     4
 #else

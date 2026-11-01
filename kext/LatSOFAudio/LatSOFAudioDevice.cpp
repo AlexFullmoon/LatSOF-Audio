@@ -716,19 +716,10 @@ struct sof_ipc_pcm_params {
 #define PIPE7_ID         7
 
 // Pipeline 3: DMIC0 capture (internal microphone)
-// Mode 2 (4 DMICs) replays Linux's PIPELINE.10.DMIC0.IN verbatim (tplg_ipc_dmic4ch.h), with its ids.
-#include "tplg_ipc_dmic4ch.h"
-#if LATSOF_PDM_MODE == 2 && LATSOF_TPLG_REPLAY
-#define PIPE3_SCHED_ID   DMIC4CH_PIPE_SCHED_ID
-#define PIPE3_HOST_ID    DMIC4CH_HOST_ID
-#define PIPE3_DAI_ID     DMIC4CH_PIPE_DAI_ID
-#define PIPE3_ID         DMIC4CH_PIPE_ID
-#else
 #define PIPE3_SCHED_ID   30
 #define PIPE3_HOST_ID    35
 #define PIPE3_DAI_ID     34
 #define PIPE3_ID         3
-#endif
 #define PIPE3_BUF0_ID    31
 
 // Pipeline 1: SSP0 playback (RT5682 headphone output)
@@ -3692,21 +3683,12 @@ bool LatSOFAudioDevice::initDSP() {
                   countIpc(r);
                 };
                 // ==================== PIPELINE 3: DMIC Capture ====================
-#if LATSOF_PDM_MODE == 2 && LATSOF_TPLG_REPLAY
-                // Verbatim replay of Linux's PIPELINE.10.DMIC0.IN:
-                // DAI -> BUF -> EQIIR -> BUF -> PGA -> BUF -> host, DAI schedules the pipeline.
-                // (Linux also builds a 16 kHz DMIC pipeline, DAI index 1, at topology load; ablation
-                // showed the firmware does not need it for 4ch capture on index 0.)
-                for (int i = 0; i < kDmicTplgCount; i++) {
-                    if (kDmicTplg[i].len == 0) { sendDmicCfg(0, 48000, 200); continue; }
-                    countIpc(sendIpc(kDmicTplg[i].data, kDmicTplg[i].len));
-                }
-#else
                 { struct { UInt32 size, cmd, comp_id, pipeline_id, sched_id, core,
                            period, priority, period_mips, frames_per_sched,
                            xrun_limit_usecs, time_domain; } __attribute__((packed)) m = {
-                      // 2ch legacy path (modes 0/1): host-scheduled, known to work. Only the full Linux
-                      // chain (mode 2) is DAI-scheduled; DAI scheduling alone made TRIG_START time out.
+                      // Host-scheduled DAI -> BUF -> host chain, used for 2ch and 4ch alike (verified on
+                      // 4 DMICs; Linux's DAI-scheduled EQIIR+PGA chain is not needed). DAI scheduling
+                      // alone made TRIG_START time out.
                       48, 0x30100000, PIPE3_SCHED_ID, PIPE3_ID, PIPE3_HOST_ID, 0,
                       1000, 0, 5000, 0, 0, TIME_TIMER };
                   countIpc(sendIpc(&m, sizeof(m))); }
@@ -3739,8 +3721,6 @@ bool LatSOFAudioDevice::initDSP() {
                   for (int c = 0; c < 2; c++) countIpc(sendIpc(&conn[c], 16)); }
                 { struct { UInt32 s,c,id; } __attribute__((packed)) m = {12, 0x30130000, PIPE3_SCHED_ID};
                   countIpc(sendIpc(&m, 12)); }
-
-#endif
 
                 { char r[32]; snprintf(r, sizeof(r), "%d OK, %d FAIL", ipcOk, ipcFail);
                   setProperty("Topology", r); }
