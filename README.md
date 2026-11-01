@@ -1,5 +1,14 @@
 # LatSOF-Audio — Sound Open Firmware (SOF) DMIC microphone driver for macOS
 
+> **4-microphone support (Comet Lake, 4 DMICs on both PDM controllers).** `LATSOF_PDM_MODE` in
+> `kext/LatSOFAudio/LatSOFAudioDevice.hpp` selects the layout: `2` (default) = PDM0+PDM1, one 4-channel
+> device; `0` = PDM0 only, 2 channels; `1` = PDM1 only, 2 channels (diagnostic). Mode 2 was verified on a
+> Lenovo "TP-N2W" NHLT board (Ventura) with the firmware Linux loads for it (`sof-cml.ri` 2:2:0-57864,
+> ABI 3:22:1 — identical to sof-bin v2.2 `sof-cnl.ri`). Check the channels with
+> `swiftc -O tools/chanlevel.swift -o chanlevel && ./chanlevel LatSOF 10` (run from Terminal.app for
+> microphone permission). Debug helpers: `tools/ldc_decode.py` decodes the firmware trace the kext
+> publishes in IORegistry (`FW-Trace`, `FW-Trace-Run`) with Linux's `sof-cnl.ldc`.
+
 **Bring Intel Smart Sound Technology (SST / cAVS) digital microphones (DMIC) to macOS — as a real, native IOAudio input device.**
 
 This is a single macOS kernel extension (kext) that implements, entirely in-kernel:

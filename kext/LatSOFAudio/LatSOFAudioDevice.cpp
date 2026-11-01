@@ -3662,24 +3662,10 @@ bool LatSOFAudioDevice::initDSP() {
                   // pdm[] starts at DMIC+68 (hdr.size 4 + 12 words + reserved[5]) -> PDM0 id at +72 (m+124)
                   UInt8 *p1=p0+24;
                   if (LATSOF_PDM_MODE == 2) { *(UInt16*)(p1+0)=1; *(UInt16*)(p1+2)=1; *(UInt16*)(p1+4)=1; } // id=1, mic_a=1, mic_b=1
-                  // The firmware has been seen to reject this exact message with -22 (find_modes) in
-                  // one run and accept it in another, so try the known-plausible format/flags
-                  // combinations until it is accepted and record which one worked.
-                  static const struct { UInt16 fmt; UInt8 flags; } variants[] = {
-                      {0, 1}, {6, 0}, {0, 0}, {6, 1} };
-                  UInt32 r = 0xFFFFFFFF;
-                  for (unsigned v = 0; v < sizeof(variants) / sizeof(variants[0]); v++) {
-                      *(UInt16*)(m+16) = variants[v].fmt; m[19] = variants[v].flags;
-                      r = sendIpc(m, 216);
-                      if (r == 0) {
-                          char vs[64];
-                          snprintf(vs, sizeof(vs), "idx %u accepted with format=%u flags=%u (try %u)",
-                                   (unsigned)daiIdx, variants[v].fmt, variants[v].flags, v + 1);
-                          setProperty("DMIC-Cfg", vs);
-                          IOLog("LatSOF: DMIC DAI_CONFIG %s\n", vs);
-                          break;
-                      }
-                  }
+                  // Same bytes as Linux (format=0, flags=HW_PARAMS); the firmware accepts it first try.
+                  *(UInt16*)(m+16) = 0; m[19] = 1;
+                  UInt32 r = sendIpc(m, 216);
+                  setProperty("DMIC-Cfg", r == 0 ? "accepted" : "REJECTED");
                   countIpc(r);
                 };
                 // ==================== PIPELINE 3: DMIC Capture ====================
