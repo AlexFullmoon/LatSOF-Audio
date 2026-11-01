@@ -5,3 +5,8 @@
 
 # firmware blob (fetched from thesofproject/sof-bin at build time)
 kext/LatSOFAudio/Firmware/*.ri
+
+# Testing
+current/
+tools/
+chanlevel
