@@ -90,7 +90,7 @@ bool LatSOFKernelAudioEngine::initWithOwner(LatSOFAudioDevice *o) {
     lastWrapFrame = 0;
     engineRunning = false;
     gainMilliDecibels = 30000;   // +30 dB ≈ the plugin's 32x software gain
-    dcX1[0] = dcX1[1] = dcY1[0] = dcY1[1] = 0.0f;
+    for (int i = 0; i < 8; i++) dcX1[i] = dcY1[i] = 0.0f;
     dcNextFrame = kDCSeedPending;
     edgeMisses = notReadyPolls = preemptRejects = 0;
     AbsoluteTime zero = 0;
@@ -335,7 +335,7 @@ IOReturn LatSOFKernelAudioEngine::performAudioEngineStart() {
     IOReturn r = owner->engineStartCapture();
     if (r != kIOReturnSuccess) return r;
 
-    dcX1[0] = dcX1[1] = dcY1[0] = dcY1[1] = 0.0f;
+    for (int i = 0; i < 8; i++) dcX1[i] = dcY1[i] = 0.0f;
     dcNextFrame = kDCSeedPending;
     // If capture was already running (isCapturing early-success — e.g. a
     // client retry after the wake window), DPIB is mid-ring: declare t0
@@ -537,7 +537,8 @@ IOReturn LatSOFKernelAudioEngine::convertInputSamples(const void *sampleBuf, voi
     if (dcNextFrame == kDCSeedPending)
         dcNextFrame = firstSampleFrame;
     bool contiguous = (firstSampleFrame == dcNextFrame);
-    float x1[2] = { dcX1[0], dcX1[1] }, y1[2] = { dcY1[0], dcY1[1] };
+    float x1[8], y1[8];
+    for (UInt32 ch = 0; ch < kEngineChannels; ch++) { x1[ch] = dcX1[ch]; y1[ch] = dcY1[ch]; }
 
     const float R = 0.98822f;   // ~90 Hz corner at 48 kHz, same as plugin
     for (UInt32 i = 0; i < numSampleFrames; i++) {
@@ -556,8 +557,7 @@ IOReturn LatSOFKernelAudioEngine::convertInputSamples(const void *sampleBuf, voi
         }
     }
     if (contiguous) {
-        dcX1[0] = x1[0]; dcX1[1] = x1[1];
-        dcY1[0] = y1[0]; dcY1[1] = y1[1];
+        for (UInt32 ch = 0; ch < kEngineChannels; ch++) { dcX1[ch] = x1[ch]; dcY1[ch] = y1[ch]; }
         dcNextFrame = (firstSampleFrame + numSampleFrames) % kEngineFrames;
     }
     return kIOReturnSuccess;

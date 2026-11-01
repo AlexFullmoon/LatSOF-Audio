@@ -115,7 +115,7 @@ private:
     // raw PDM data carries a DC offset, and filtering before gain keeps the
     // offset from eating headroom. State is per-channel.
     SInt32 gainMilliDecibels;           // set by the level control
-    float dcX1[2], dcY1[2];
+    float dcX1[8], dcY1[8];   // per-channel DC-blocker state (up to 8 channels)
     UInt32 dcNextFrame;                 // multi-client guard; kDCSeedPending until first IO
 
     // patch-29 clock accuracy. DPIB is not a continuous counter: it advances

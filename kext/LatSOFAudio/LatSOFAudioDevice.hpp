@@ -55,7 +55,23 @@ enum {
 // DMIC capture: 2ch S32 @ 48 kHz — this driver's DMA format (SDxFMT 0x0041,
 // 32-bit container). Linux hw_params for the same PCM negotiates S16/2ch;
 // the earlier "4ch" claim here was from the reference driver's board.
+// LATSOF_PDM_MODE: 2 = both PDM controllers, 4ch (4 DMICs, production)
+//                  0 = PDM0 only, 2ch (left pair)
+//                  1 = PDM1 only, 2ch (right pair; diagnostic: is PDM1 alive?)
+#ifndef LATSOF_PDM_MODE
+#define LATSOF_PDM_MODE         2
+#endif
+// LATSOF_TPLG_REPLAY: 1 = send Linux's whole 4ch DMIC pipeline verbatim (tplg_ipc_dmic4ch.h).
+// 0 = the hand-built host-scheduled pipeline. Replay currently makes the firmware reject the
+// DMIC DAI_CONFIG (-22, see FW-Trace), so it is off by default.
+#ifndef LATSOF_TPLG_REPLAY
+#define LATSOF_TPLG_REPLAY      1
+#endif
+#if LATSOF_PDM_MODE == 2
 #define kLatSOF_CapChannels     4
+#else
+#define kLatSOF_CapChannels     2
+#endif
 #define kLatSOF_CapBytesPerFrame (kLatSOF_CapChannels * 4)  // 16 (4ch × S32)
 #define kLatSOF_CapBufferSize   (kLatSOF_BufferFrames * kLatSOF_CapBytesPerFrame)
 
@@ -173,6 +189,7 @@ private:
     // until the DSP is rebuilt. Reuses the audited retry machinery:
     // jackPoll rebuilds within ~1.5 s and the demand latch re-arms capture.
     void     scheduleDspRecovery(const char *reason);
+    void     snapshotFwTrace(const char *traceProp, const char *win0Prop);
 
     // Fast mute: codec mute (RT5682) + DMA buffer bzero. Called on the
     // kIOMessageSystemWillSleep early notification and at shutdownDSP entry,

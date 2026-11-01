@@ -716,11 +716,20 @@ struct sof_ipc_pcm_params {
 #define PIPE7_ID         7
 
 // Pipeline 3: DMIC0 capture (internal microphone)
+// Mode 2 (4 DMICs) replays Linux's PIPELINE.10.DMIC0.IN verbatim (tplg_ipc_dmic4ch.h), with its ids.
+#include "tplg_ipc_dmic4ch.h"
+#if LATSOF_PDM_MODE == 2 && LATSOF_TPLG_REPLAY
+#define PIPE3_SCHED_ID   DMIC4CH_PIPE_SCHED_ID
+#define PIPE3_HOST_ID    DMIC4CH_HOST_ID
+#define PIPE3_DAI_ID     DMIC4CH_PIPE_DAI_ID
+#define PIPE3_ID         DMIC4CH_PIPE_ID
+#else
 #define PIPE3_SCHED_ID   30
 #define PIPE3_HOST_ID    35
-#define PIPE3_BUF0_ID    31
 #define PIPE3_DAI_ID     34
 #define PIPE3_ID         3
+#endif
+#define PIPE3_BUF0_ID    31
 
 // Pipeline 1: SSP0 playback (RT5682 headphone output)
 // Using Linux kprobe comp_ids for Pipeline 1
@@ -3574,12 +3583,24 @@ bool LatSOFAudioDevice::initDSP() {
                     UInt8 *src = (UInt8 *)msg;
                     for (UInt32 i = 0; i < msgSize; i += 4)
                         wr32(ob, i, *(UInt32 *)(src + i));
+                    // Read the mailbox back: a write that did not land would explain a firmware
+                    // that sees different bytes than we sent.
+                    UInt32 bad = 0, firstBad = 0;
+                    for (UInt32 i = 0; i < msgSize; i += 4)
+                        if (rd32(ob, i) != *(UInt32 *)(src + i)) { if (!bad) firstBad = i; bad++; }
+                    UInt32 cmd = msgSize >= 8 ? *(UInt32 *)(src + 4) : 0;
+                    if (bad) IOLog("LatSOF: IPC cmd 0x%08x len %u: %u mailbox words differ after write (first @%u)\n",
+                                   cmd, msgSize, bad, firstBad);
                     wr32(dsp, IPC_HIPCIDR, IPC_BUSY);
-                    if (!poll32(dsp, IPC_HIPCIDA, IPC_DONE, IPC_DONE, 500000))
+                    if (!poll32(dsp, IPC_HIPCIDA, IPC_DONE, IPC_DONE, 500000)) {
+                        IOLog("LatSOF: IPC cmd 0x%08x len %u: no reply (timeout)\n", cmd, msgSize);
                         return 0xFFFFFFFF;
+                    }
                     UInt32 replyErr = rd32(ob, 8);
                     wr32(dsp, IPC_HIPCIDA, rd32(dsp, IPC_HIPCIDA) | IPC_DONE);
                     wr32(dsp, IPC_HIPCCTL, rd32(dsp, IPC_HIPCCTL) | 0x02);
+                    if (replyErr != 0 && cmd != 0xF0000000)
+                        IOLog("LatSOF: IPC cmd 0x%08x len %u: firmware replied error %d\n", cmd, msgSize, (int)replyErr);
                     return (replyErr != 0) ? replyErr : 0;
                 };
 
@@ -3620,57 +3641,110 @@ bool LatSOFAudioDevice::initDSP() {
                 int ipcOk = 0, ipcFail = 0;
                 auto countIpc = [&](UInt32 r) { if (r == 0) ipcOk++; else ipcFail++; };
 
-                // ==================== PIPELINE 3: DMIC Capture ====================
-                { struct { UInt32 size, cmd, comp_id, pipeline_id, sched_id, core,
-                           period, priority, period_mips, frames_per_sched,
-                           xrun_limit_usecs, time_domain; } __attribute__((packed)) m = {
-                      48, 0x30100000, PIPE3_SCHED_ID, PIPE3_ID, PIPE3_HOST_ID, 0,
-                      1000, 0, 5000, 0, 0, TIME_TIMER };
-                  countIpc(sendIpc(&m, sizeof(m))); }
-                { struct { UInt32 size, cmd, id, type, pipeline_id, core, ext,
-                           buf_size, caps, flags, reserved; } __attribute__((packed)) m = {
-                      44, 0x30200000, PIPE3_BUF0_ID, COMP_BUFFER, PIPE3_ID, 0, 0,
-                      9600, 0x71, 0, 0 };
-                  countIpc(sendIpc(&m, sizeof(m))); }
-                { UInt32 m[76/4] = {}; m[0]=76; m[1]=0x30010000; m[2]=PIPE3_HOST_ID;
-                  m[3]=COMP_HOST; m[4]=PIPE3_ID; m[7]=36; m[9]=2; m[10]=2;
-                  m[12]=FRAME_S32; m[16]=DIR_CAPTURE;
-                  countIpc(sendIpc(m, 76)); }
-                { UInt32 m[80/4] = {}; m[0]=80; m[1]=0x30010000; m[2]=PIPE3_DAI_ID;
-                  m[3]=COMP_DAI; m[4]=PIPE3_ID; m[7]=36; m[10]=2;
-                  m[12]=FRAME_S32; m[16]=DIR_CAPTURE;
-                  m[17]=0; m[18]=DAI_DMIC;
-                  countIpc(sendIpc(m, 80)); }
-                // DAI_CONFIG for DMIC0 — match Linux kprobe [42] exactly
-                { UInt8 m[216] = {};
+                // DAI_CONFIG for DMIC — byte-identical to Linux (ubuntu bpftrace dump).
+                // The tplg has TWO DMIC DAIs (dmic01 = index 0 @48 kHz, ramp 200;
+                // dmic16k = index 1 @16 kHz, ramp 400), both on PDM0+PDM1. The firmware
+                // derives the PDM/FIFO setup from both stored configs, and Linux sends
+                // index 1 (its pipeline is set up at topology load) before capturing on 0.
+                auto sendDmicCfg = [&](UInt32 daiIdx, UInt32 fs, UInt32 ramp) {
+                  UInt8 m[216] = {};
                   *(UInt32*)(m+0)=216; *(UInt32*)(m+4)=0x80010000;
-                  *(UInt32*)(m+8)=DAI_DMIC; *(UInt32*)(m+12)=0;
-                  *(UInt16*)(m+16)=6; // SOF_DAI_FMT_PDM
+                  *(UInt32*)(m+8)=DAI_DMIC; *(UInt32*)(m+12)=daiIdx;
+                  // Linux (ABI 3.22, ubuntu bpftrace dump): format=0, group_id=0,
+                  // flags=SOF_DAI_CONFIG_FLAGS_HW_PARAMS(1) -> word @16 = 0x01000000
+                  *(UInt16*)(m+16)=0; m[19]=1;
                   UInt8 *d=m+52;
                   // Match Linux: hdr.size=0, pdmclk_min=2400000
                   *(UInt32*)(d+0)=0;         // hdr.size (Linux=0, was 164)
                   *(UInt32*)(d+4)=1;         // driver_ipc_version
                   *(UInt32*)(d+8)=2400000;   // pdmclk_min (Linux=2400000, was 500000)
                   *(UInt32*)(d+12)=4800000;  // pdmclk_max
-                  *(UInt32*)(d+16)=48000;    // fifo_fs
+                  *(UInt32*)(d+16)=fs;       // fifo_fs
                   *(UInt16*)(d+24)=32; *(UInt16*)(d+26)=32; // fifo_bits, fifo_bits_b
                   *(UInt16*)(d+28)=40; *(UInt16*)(d+30)=60; // duty_min, duty_max
-                  *(UInt32*)(d+32)=2;        // 4 DMICs: 2 PDM controllers (2 mics each), per sof-hda-generic-4ch.tplg
-                  *(UInt32*)(d+44)=200;      // unmute_ramp_time_ms (4ch tplg dmic01: 200)
+                  *(UInt32*)(d+32)=(LATSOF_PDM_MODE == 2) ? 2 : 1; // 4 DMICs: 2 PDM controllers (2 mics each), per sof-hda-generic-4ch.tplg
+                  *(UInt32*)(d+44)=ramp;     // unmute_ramp_time_ms (4ch tplg: dmic01 200, dmic16k 400)
                   // PDM0 at DMIC+72 (DAI_CONFIG offset 124)
                   UInt8 *p0=m+124;
-                  *(UInt16*)(p0+0)=0; *(UInt16*)(p0+2)=1; *(UInt16*)(p0+4)=1; // id=0, mic_a=1, mic_b=1
+                  *(UInt16*)(p0+0)=(LATSOF_PDM_MODE == 1) ? 1 : 0; *(UInt16*)(p0+2)=1; *(UInt16*)(p0+4)=1; // id (mode 1: PDM1 alone), mic_a=1, mic_b=1
                   // PDM1: sof_ipc_dai_dmic_pdm_ctrl is 24 bytes (hdr 4 + 7 u16 + 3 u16 reserved);
                   // pdm[] starts at DMIC+68 (hdr.size 4 + 12 words + reserved[5]) -> PDM0 id at +72 (m+124)
                   UInt8 *p1=p0+24;
-                  *(UInt16*)(p1+0)=1; *(UInt16*)(p1+2)=1; *(UInt16*)(p1+4)=1; // id=1, mic_a=1, mic_b=1
-                  countIpc(sendIpc(m, 216)); }
+                  if (LATSOF_PDM_MODE == 2) { *(UInt16*)(p1+0)=1; *(UInt16*)(p1+2)=1; *(UInt16*)(p1+4)=1; } // id=1, mic_a=1, mic_b=1
+                  // The firmware has been seen to reject this exact message with -22 (find_modes) in
+                  // one run and accept it in another, so try the known-plausible format/flags
+                  // combinations until it is accepted and record which one worked.
+                  static const struct { UInt16 fmt; UInt8 flags; } variants[] = {
+                      {0, 1}, {6, 0}, {0, 0}, {6, 1} };
+                  UInt32 r = 0xFFFFFFFF;
+                  for (unsigned v = 0; v < sizeof(variants) / sizeof(variants[0]); v++) {
+                      *(UInt16*)(m+16) = variants[v].fmt; m[19] = variants[v].flags;
+                      r = sendIpc(m, 216);
+                      if (r == 0) {
+                          char vs[64];
+                          snprintf(vs, sizeof(vs), "idx %u accepted with format=%u flags=%u (try %u)",
+                                   (unsigned)daiIdx, variants[v].fmt, variants[v].flags, v + 1);
+                          setProperty("DMIC-Cfg", vs);
+                          IOLog("LatSOF: DMIC DAI_CONFIG %s\n", vs);
+                          break;
+                      }
+                  }
+                  countIpc(r);
+                };
+                // ==================== PIPELINE 3: DMIC Capture ====================
+#if LATSOF_PDM_MODE == 2 && LATSOF_TPLG_REPLAY
+                // Verbatim replay of Linux's PIPELINE.10.DMIC0.IN:
+                // DAI -> BUF -> EQIIR -> BUF -> PGA -> BUF -> host, DAI schedules the pipeline.
+                // Linux first builds the 16 kHz DMIC pipeline (DAI index 1) at topology load; the
+                // firmware keeps both DMIC DAI configs and derives the PDM/FIFO setup from them.
+                for (int i = 0; i < kDmic16kTplgCount; i++) {
+                    if (kDmic16kTplg[i].len == 0) { sendDmicCfg(1, 16000, 400); continue; }
+                    countIpc(sendIpc(kDmic16kTplg[i].data, kDmic16kTplg[i].len));
+                }
+                for (int i = 0; i < kDmicTplgCount; i++) {
+                    if (kDmicTplg[i].len == 0) { sendDmicCfg(0, 48000, 200); continue; }
+                    countIpc(sendIpc(kDmicTplg[i].data, kDmicTplg[i].len));
+                }
+#else
+                { struct { UInt32 size, cmd, comp_id, pipeline_id, sched_id, core,
+                           period, priority, period_mips, frames_per_sched,
+                           xrun_limit_usecs, time_domain; } __attribute__((packed)) m = {
+                      // 2ch legacy path (modes 0/1): host-scheduled, known to work. Only the full Linux
+                      // chain (mode 2) is DAI-scheduled; DAI scheduling alone made TRIG_START time out.
+                      48, 0x30100000, PIPE3_SCHED_ID, PIPE3_ID, PIPE3_HOST_ID, 0,
+                      1000, 0, 5000, 0, 0, TIME_TIMER };
+                  countIpc(sendIpc(&m, sizeof(m))); }
+                { struct { UInt32 size, cmd, id, type, pipeline_id, core, ext,
+                           buf_size, caps, flags, reserved; } __attribute__((packed)) m = {
+                      44, 0x30200000, PIPE3_BUF0_ID, COMP_BUFFER, PIPE3_ID, 0, 0,
+                      kLatSOF_CapChannels * 4 * 48 * 2, 0x71, 0, 0 };  // 2 periods x 48 frames (Linux: 1536 @4ch)
+                  countIpc(sendIpc(&m, sizeof(m))); }
+                // Linux appends the component UUID as ext data (ext_data_length=16, +16 bytes);
+                // UUIDs from sof-hda-generic-4ch.tplg (host 8b9d100c-..., DAI c2b00d27-...).
+                { UInt32 m[92/4] = {}; m[0]=92; m[1]=0x30010000; m[2]=PIPE3_HOST_ID;
+                  m[3]=COMP_HOST; m[4]=PIPE3_ID; m[6]=16; m[7]=36; m[9]=0; m[10]=2;  // sink 0, source 2 (as Linux)
+                  m[12]=FRAME_S32; m[16]=DIR_CAPTURE;
+                  static const UInt8 uuidHost[16] = {0x0c,0x10,0x9d,0x8b,0x78,0x6d,0x8f,0x41,
+                                                     0x90,0xa3,0xe0,0xe8,0x05,0xd0,0x85,0x2b};
+                  memcpy((UInt8*)m + 76, uuidHost, 16);
+                  countIpc(sendIpc(m, 92)); }
+                { UInt32 m[96/4] = {}; m[0]=96; m[1]=0x30010000; m[2]=PIPE3_DAI_ID;
+                  m[3]=COMP_DAI; m[4]=PIPE3_ID; m[6]=16; m[7]=36; m[9]=2; m[10]=0;  // periods_sink=2, source=0 (as Linux)
+                  m[12]=FRAME_S32; m[16]=DIR_CAPTURE;
+                  m[17]=0; m[18]=DAI_DMIC;
+                  static const UInt8 uuidDai[16] = {0x27,0x0d,0xb0,0xc2,0xbc,0xff,0x50,0x41,
+                                                    0xa5,0x1a,0x24,0x5c,0x79,0xc5,0xe5,0x4b};
+                  memcpy((UInt8*)m + 80, uuidDai, 16);
+                  countIpc(sendIpc(m, 96)); }
+                sendDmicCfg(0, 48000, 200);
                 { struct { UInt32 s,c,src,dst; } __attribute__((packed)) conn[] = {
                       {16, 0x30030000, PIPE3_DAI_ID, PIPE3_BUF0_ID},
                       {16, 0x30030000, PIPE3_BUF0_ID, PIPE3_HOST_ID} };
                   for (int c = 0; c < 2; c++) countIpc(sendIpc(&conn[c], 16)); }
                 { struct { UInt32 s,c,id; } __attribute__((packed)) m = {12, 0x30130000, PIPE3_SCHED_ID};
                   countIpc(sendIpc(&m, 12)); }
+
+#endif
 
                 { char r[32]; snprintf(r, sizeof(r), "%d OK, %d FAIL", ipcOk, ipcFail);
                   setProperty("Topology", r); }
@@ -3978,8 +4052,37 @@ void LatSOFAudioDevice::shutdownDSPGated() {
 // Runs gated (capture paths and jackPoll share the workloop), so touching
 // the retry statics here is race-free by the same argument as everywhere
 // else in this file.
+// Copy the firmware log window (SRAM window 2) and the start of window 0 into IORegistry
+// properties; see scheduleDspRecovery() for how to read them back.
+void LatSOFAudioDevice::snapshotFwTrace(const char *traceProp, const char *win0Prop) {
+    if (!dspBase) return;
+    const UInt32 kTraceOff = 0x80000 + 2 * 0x20000, kTraceLen = 0x4000;
+    if (OSData *tr = OSData::withCapacity(kTraceLen)) {
+        for (UInt32 o = 0; o < kTraceLen; o += 4) {
+            UInt32 v = rd32(dspBase, kTraceOff + o);
+            tr->appendBytes(&v, 4);
+        }
+        setProperty(traceProp, tr);
+        tr->release();
+    }
+    if (OSData *w0 = OSData::withCapacity(0x100)) {
+        for (UInt32 o = 0; o < 0x100; o += 4) {
+            UInt32 v = rd32(dspBase, 0x80000 + o);
+            w0->appendBytes(&v, 4);
+        }
+        setProperty(win0Prop, w0);
+        w0->release();
+    }
+}
+
 void LatSOFAudioDevice::scheduleDspRecovery(const char *reason) {
     if (!pciDevice || !hdaBase || !dspBase) return;   // teardown — nothing to recover
+    // Snapshot the firmware's own log before the recovery resets the DSP. SRAM window 2
+    // (BAR4 + 0x80000 + 2 * 0x20000) holds SOF_IPC_REGION_TRACE/DEBUG/EXCEPTION; window 0
+    // starts with the ROM/FW status registers. Read back with:
+    //   ioreg -l -w0 | grep '"FW-Trace"' | sed 's/.*<\(.*\)>.*/\1/' | xxd -r -p > fwtrace.bin
+    // and decode on Linux with sof-logger and the matching sof-cnl.ldc.
+    if (gRecoveryEpisodes == 0) snapshotFwTrace("FW-Trace", "FW-Win0");
     // patch-27b: bounded episodes. Without this cap, a rebuild that
     // "succeeds" against a dead mailbox followed by a failed re-arm would
     // re-enter here and reset the retry budget indefinitely.
@@ -5032,6 +5135,7 @@ IOReturn LatSOFAudioDevice::startCaptureGated() {
           rd32(hdaBase, HDA_VS_SDXDPIB_XBASE + HDA_VS_SDXDPIB_XINTERVAL * (UInt32)capIdx),
           paramsErr, trigErr, posnOff);
       setProperty("Capture-Debug", dbg); }
+    snapshotFwTrace("FW-Trace-Run", "FW-Win0-Run");   // firmware log of a capture that DID start
 
     isCapturing = true;
     gRecoveryEpisodes = 0;   // patch-27b: a working capture refills the budget

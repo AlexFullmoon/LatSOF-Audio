@@ -68,6 +68,10 @@ $(KEXT_BUNDLE): $(OBJS)
 	cp $(SRCDIR)/Info.plist $(KEXT_BUNDLE)/Contents/
 	@echo "=== Build complete: $(KEXT_BUNDLE) ==="
 
+# every object depends on the headers (channel counts etc. live in .hpp macros);
+# without this a header-only change leaves stale objects with mismatched buffer sizes
+$(SRCS:.cpp=.o): $(wildcard $(SRCDIR)/*.hpp $(SRCDIR)/*.h)
+
 %.o: %.cpp
 	@echo "=== Compiling $< ==="
 	$(CXX) $(CXXFLAGS) -c $< -o $@
